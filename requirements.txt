@@ -1,0 +1,9 @@
+fastapi
+langchain
+openai
+pydantic
+uvicorn==0.24.0
+python-dotenv
+python-multipart
+docx2txt
+PDFPlumber
