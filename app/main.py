@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Form
 from langchain.chat_models import ChatOpenAI
 from langchain.schema.messages import SystemMessage, HumanMessage
-from langchain.document_loaders import Docx2txtLoader
+from langchain.document_loaders import Docx2txtLoader, PDFPlumberLoader
 from openai import OpenAI
 from langchain.schema.output_parser import StrOutputParser
 import json
@@ -123,6 +123,57 @@ async def process_acta(uploaded_file: UploadFile = File(...)):
                     Reglas de funcionamiento: Estatutos y reglamentos internos que rigen el funcionamiento y la toma de decisiones dentro de la empresa,
                     Datos notariales: Información sobre el notario que certificó el Acta Constitutiva, incluyendo su nombre completo, número de registro y la ubicación de su notaría,
                     Firma y sello: La firma y sello del notario que certificó el Acta Constitutiva, que garantizan su autenticidad.
+                    Return a JSON list."""
+                ),
+                HumanMessage(
+                    content=content_text
+                ),
+            ]
+        )
+        
+        # Convertir la respuesta en un diccionario de Python
+        info = json.loads(output.content)
+        
+        # Eliminar el archivo temporal
+        os.unlink(temp_file_path)
+       
+        # Devolver la respuesta
+        return {"info": info}
+    except Exception as e:
+        # Si algo sale mal, asegúrate de eliminar el archivo temporal
+        if 'temp_file_path' in locals():
+            os.unlink(temp_file_path)
+        raise HTTPException(status_code=500, detail=str(e))
+    
+# Ruta para cargar y procesar el documento constancia de situacion fiscal
+@app.post("/process-CSF/")
+async def process_acta(uploaded_file: UploadFile = File(...)):
+    try:
+        # Crear un archivo temporal para guardar el contenido del archivo cargado
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            content = await uploaded_file.read()  # Leer el contenido del archivo cargado
+            temp_file.write(content)  # Escribir el contenido en el archivo temporal
+            temp_file_path = temp_file.name  # Guardar la ruta del archivo temporal
+        
+        # Cargar el archivo Word utilizando PDFPlumberLoader
+        loader = PDFPlumberLoader(temp_file_path)
+        document = loader.load()[0]  # Suponiendo que solo hay un documento en el archivo
+        content_text = document.page_content
+        
+        # Procesar el contenido del documento con el modelo de OpenAI
+        chat = ChatOpenAI(model="gpt-4-0125-preview", temperature=0, openai_api_key=openai_api_key).bind(
+            response_format={"type": "json_object"}
+        )
+        output = chat.invoke(
+            [
+                SystemMessage(
+                    content="""Extrae la informacion del documento en caso de que exista, sino se encuentra aclara que la informacion no es proporcionada en el documento:
+                    Nombre o Razón Social: Localiza y extrae el nombre completo o razón social del contribuyente. Si no se encuentra esta información, indica que no está disponible,
+                    RFC: Busca y captura el Registro Federal de Contribuyentes (RFC) del contribuyente. Si no se incluye el RFC, señala que no se proporcionó,
+                    Domicilio Fiscal: Identifica y registra la dirección del domicilio fiscal listado en la constancia. Si no se especifica un domicilio, menciona que no se encontró,
+                    Fecha de Emisión: Encuentra y anota la fecha en que se emitió la Constancia de Situación Fiscal. Si no se indica una fecha, aclara que no se incluyó,
+                    Régimen Fiscal: Determina el tipo de régimen fiscal en el que está inscrito el contribuyente (régimen general, simplificado, etc.). Si no se especifica el régimen, indica que no se proporcionó esa información,
+                    Situación Fiscal: Verifica si la constancia indica que el contribuyente está al corriente con sus obligaciones fiscales. Si no se menciona explícitamente, señala que no se aclaró la situación fiscal.
                     Return a JSON list."""
                 ),
                 HumanMessage(
