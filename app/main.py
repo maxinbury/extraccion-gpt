@@ -195,3 +195,55 @@ async def process_acta(uploaded_file: UploadFile = File(...)):
         if 'temp_file_path' in locals():
             os.unlink(temp_file_path)
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # Ruta para cargar y procesar el documento de caratula bancaria
+@app.post("/process-CB/")
+async def process_acta(uploaded_file: UploadFile = File(...)):
+    try:
+        # Crear un archivo temporal para guardar el contenido del archivo cargado
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            content = await uploaded_file.read()  # Leer el contenido del archivo cargado
+            temp_file.write(content)  # Escribir el contenido en el archivo temporal
+            temp_file_path = temp_file.name  # Guardar la ruta del archivo temporal
+        
+        # Cargar el archivo Word utilizando PDFPlumberLoader
+        loader = PDFPlumberLoader(temp_file_path)
+        document = loader.load()[0]  # Suponiendo que solo hay un documento en el archivo
+        content_text = document.page_content
+        
+        # Procesar el contenido del documento con el modelo de OpenAI
+        chat = ChatOpenAI(model="gpt-4-0125-preview", temperature=0, openai_api_key=openai_api_key).bind(
+            response_format={"type": "json_object"}
+        )
+        output = chat.invoke(
+            [
+                SystemMessage(
+                    content="""Extrae la informacion del documento en caso de que exista, sino se encuentra aclara que la informacion no es proporcionada en el documento:
+                    Titural de la Cuenta:  Localiza y captura el nombre completo o razón social del titular de la cuenta bancaria, ya sea una persona física o moral. Si no se encuentra el titular, indica que no está disponible,
+                    Número de Cuenta: Busca y registra el número de cuenta bancaria asociado al titular. Si no se proporciona el número de cuenta, menciona que no se incluyó,
+                    Institución Bancaria: Identifica y anota el nombre de la institución bancaria donde se encuentra la cuenta. Si no se especifica el nombre del banco, señala que no se encontró,
+                    CLABE Bancaria:  Localiza y captura la CLABE (Clave Bancaria Estandarizada) interbancaria, que es un código único que identifica la cuenta bancaria en el sistema financiero mexicano. Si no se proporciona la CLABE, indica que no se incluyó,
+                    Sucursal Bancaria: Si la cuenta está asociada a una sucursal bancaria específica, busca y registra la información sobre dicha sucursal, como su nombre, dirección o código. Si no se menciona la sucursal bancaria, señala que no se encontró,
+                    Fecha de Emisión:  Identifica y anota la fecha en que se emitió la carátula bancaria. Si no se especifica la fecha de emisión, indica que no se proporcionó,
+                    Firma y Sello de la Institución Bancaria: Verifica si la carátula bancaria incluye la firma y el sello oficial del banco emisor para validar la autenticidad del documento. Si no se encuentran la firma y el sello, menciona que no se incluyeron en el documento proporcionado.
+                    Return a JSON list."""
+                ),
+                HumanMessage(
+                    content=content_text
+                ),
+            ]
+        )
+        
+        # Convertir la respuesta en un diccionario de Python
+        info = json.loads(output.content)
+        
+        # Eliminar el archivo temporal
+        os.unlink(temp_file_path)
+       
+        # Devolver la respuesta
+        return {"info": info}
+    except Exception as e:
+        # Si algo sale mal, asegúrate de eliminar el archivo temporal
+        if 'temp_file_path' in locals():
+            os.unlink(temp_file_path)
+        raise HTTPException(status_code=500, detail=str(e))
